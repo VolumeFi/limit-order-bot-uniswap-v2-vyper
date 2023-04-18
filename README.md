@@ -1,4 +1,4 @@
-# Limit Order Bot Vyper for Pancakeswap V2
+# Limit Order Bot Vyper for Uniswap V2
 
 ## Dependencies
 
@@ -12,10 +12,11 @@
 brownie accounts new deployer_account
 ```
 
-## Deploy on Binance smart chain mainnet
-Edit Compass-EVM contract address in `scripts/deploy.py`.
+## Deploy on mainnet
+Create `scripts/deploy_*.py` and Compass-EVM contract address.
+### - Pancakeswap V2
 ```sh
-brownie run scripts/deploy.py --network bsc-main
+brownie run scripts/deploy_pancakeswap.py --network bsc-main
 ```
 
 ## Read-Only functions
