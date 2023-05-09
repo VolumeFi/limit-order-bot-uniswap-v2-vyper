@@ -4,7 +4,8 @@ struct Deposit:
     token0: address
     token1: address
     amount0: uint256
-    amount1: uint256
+    amount1_min: uint256
+    amount1_max: uint256
     pool: address
     depositor: address
 
@@ -32,7 +33,9 @@ event Deposited:
     token0: address
     token1: address
     amount0: uint256
-    amount1: uint256
+    amount1_min: uint256
+    amount1_max: uint256
+    pool: address
     depositor: address
 
 event Canceled:
@@ -40,6 +43,8 @@ event Canceled:
 
 event Withdrawn:
     deposit_id: uint256
+    withdrawer: address
+    profit_taking_or_stop_loss: bool
     out_amount: uint256
 
 event Ignored:
@@ -96,7 +101,7 @@ def _safe_transfer_from(_token: address, _from: address, _to: address, _value: u
 
 @external
 @payable
-def deposit(token0: address, token1: address, amount0: uint256, amount1: uint256):
+def deposit(token0: address, token1: address, amount0: uint256, amount1_min: uint256, amount1_max: uint256):
     if token0 == VETH:
         assert msg.value == amount0
         if msg.value > amount0:
@@ -106,17 +111,20 @@ def deposit(token0: address, token1: address, amount0: uint256, amount1: uint256
         orig_balance: uint256 = ERC20(token0).balanceOf(self)
         self._safe_transfer_from(token0, msg.sender, self, amount0)
         assert ERC20(token0).balanceOf(self) == orig_balance + amount0
+    assert amount1_max > amount1_min
     deposit_id: uint256 = self.deposit_size
+    pool: address = UniswapV2Factory(FACTORY).getPair(token0, token1)
     self.deposits[deposit_id] = Deposit({
         token0: token0,
         token1: token1,
         amount0: amount0,
-        amount1: amount1,
-        pool: UniswapV2Factory(FACTORY).getPair(token0, token1),
+        amount1_min: amount1_min,
+        amount1_max: amount1_max,
+        pool: pool,
         depositor: msg.sender
     })
     self.deposit_size = deposit_id + 1
-    log Deposited(deposit_id, token0, token1, amount0, amount1, msg.sender)
+    log Deposited(deposit_id, token0, token1, amount0, amount1_min, amount1_max, pool, msg.sender)
 
 @external
 def cancel(deposit_id: uint256):
@@ -126,7 +134,8 @@ def cancel(deposit_id: uint256):
         token0: empty(address),
         token1: empty(address),
         amount0: 0,
-        amount1: 0,
+        amount1_min: 0,
+        amount1_max: 0,
         pool: empty(address),
         depositor: empty(address)
     })
@@ -135,16 +144,17 @@ def cancel(deposit_id: uint256):
         send(msg.sender, deposit.amount0)
     else:
         self._safe_transfer(deposit.token0, msg.sender, deposit.amount0)
-    log Canceled(deposit_id)
+    log Withdrawn(deposit_id, msg.sender, False, 0)
 
 @internal
-def _withdraw(deposit_id: uint256):
+def _withdraw(deposit_id: uint256, profit_taking_or_stop_loss: bool):
     deposit: Deposit = self.deposits[deposit_id]
     self.deposits[deposit_id] = Deposit({
         token0: empty(address),
         token1: empty(address),
         amount0: 0,
-        amount1: 0,
+        amount1_min: 0,
+        amount1_max: 0,
         pool: empty(address),
         depositor: empty(address)
     })
@@ -155,21 +165,30 @@ def _withdraw(deposit_id: uint256):
         self._safe_approve(deposit.token0, ROUTER, deposit.amount0)
     amounts: DynArray[uint256, 2] = [0, 0]
     if deposit.token1 == VETH:
-        amounts = UniswapV2Router(ROUTER).swapExactTokensForETH(deposit.amount0, deposit.amount1, [deposit.token0, WETH], deposit.depositor, block.timestamp)
+        if profit_taking_or_stop_loss:
+            amounts = UniswapV2Router(ROUTER).swapExactTokensForETH(deposit.amount0, deposit.amount1_max, [deposit.token0, WETH], deposit.depositor, block.timestamp)
+        else:
+            amounts = UniswapV2Router(ROUTER).swapExactTokensForETH(deposit.amount0, deposit.amount1_min, [deposit.token0, WETH], deposit.depositor, block.timestamp)
     else:
-        amounts = UniswapV2Router(ROUTER).swapExactTokensForTokens(deposit.amount0, deposit.amount1, [deposit.token0, deposit.token1], deposit.depositor, block.timestamp)
-    log Withdrawn(deposit_id, amounts[1])
+        if profit_taking_or_stop_loss:
+            amounts = UniswapV2Router(ROUTER).swapExactTokensForTokens(deposit.amount0, deposit.amount1_max, [deposit.token0, deposit.token1], deposit.depositor, block.timestamp)
+        else:
+            amounts = UniswapV2Router(ROUTER).swapExactTokensForTokens(deposit.amount0, deposit.amount1_min, [deposit.token0, deposit.token1], deposit.depositor, block.timestamp)
+    log Withdrawn(deposit_id, msg.sender, profit_taking_or_stop_loss, amounts[1])
 
 @external
-def withdraw(deposit_id: uint256):
+def withdraw(deposit_id: uint256, profit_taking_or_stop_loss: bool):
     assert msg.sender == self.compass
-    self._withdraw(deposit_id)
+    self._withdraw(deposit_id, profit_taking_or_stop_loss)
 
 @external
-def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE]):
+def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], profit_taking_or_stop_loss: DynArray[bool, MAX_SIZE]):
     assert msg.sender == self.compass
-    for deposit_id in deposit_ids:
-        self._withdraw(deposit_id)
+    assert len(deposit_ids) == len(profit_taking_or_stop_loss)
+    for i in range(MAX_SIZE):
+        if i >= len(deposit_ids):
+            break
+        self._withdraw(deposit_ids[i], profit_taking_or_stop_loss[i])
 
 @external
 @view
@@ -195,10 +214,10 @@ def withdrawable_ids() -> DynArray[uint256, MAX_SIZE]:
         reserve1: uint256 = convert(slice(_response, 32, 32), uint256)
         token0: address = UniswapV2Pair(_deposit.pool).token0()
         if _deposit.token0 == token0 or (token0 == WETH and _deposit.token0 == VETH):
-            if _deposit.amount0 * reserve1 * 99 > _deposit.amount1 * reserve0 * 100:
+            if _deposit.amount0 * reserve1 * 99 > _deposit.amount1_max * reserve0 * 100:
                 ids.append(_deposit_id)
         else:
-            if _deposit.amount0 * reserve0 * 99 > _deposit.amount1 * reserve1 * 100:
+            if _deposit.amount0 * reserve0 * 99 > _deposit.amount1_max * reserve1 * 100:
                 ids.append(_deposit_id)
         if len(ids) >= MAX_SIZE:
             break
