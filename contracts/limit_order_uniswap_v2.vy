@@ -38,17 +38,15 @@ event Deposited:
     pool: address
     depositor: address
 
-event Canceled:
-    deposit_id: uint256
-
 event Withdrawn:
     deposit_id: uint256
     withdrawer: address
     profit_taking_or_stop_loss: bool
     out_amount: uint256
 
-event Ignored:
-    deposit_id: uint256
+event UpdateCompass:
+    old_compass: address
+    new_compass: address
 
 WETH: immutable(address)
 VETH: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE # Virtual ETH
@@ -56,18 +54,16 @@ MAX_SIZE: constant(uint256) = 16
 ROUTER: immutable(address)
 FACTORY: immutable(address)
 compass: public(address)
-admin: public(address)
 deposit_size: public(uint256)
 deposits: public(HashMap[uint256, Deposit])
-ignores: public(HashMap[uint256, bool])
 
 @external
 def __init__(_compass: address, router: address):
     self.compass = _compass
-    self.admin = msg.sender
     ROUTER = router
     WETH = UniswapV2Router(ROUTER).WETH()
     FACTORY = UniswapV2Router(ROUTER).factory()
+    log UpdateCompass(empty(address), _compass)
 
 @internal
 def _safe_approve(_token: address, _to: address, _value: uint256):
@@ -191,53 +187,10 @@ def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], profit_taking_or
         self._withdraw(deposit_ids[i], profit_taking_or_stop_loss[i])
 
 @external
-@view
-def withdrawable_ids() -> DynArray[uint256, MAX_SIZE]:
-    ids: DynArray[uint256, MAX_SIZE] = []
-    _max_id: uint256 = self.deposit_size - 1
-    for i in range(1000000):
-        if i > _max_id:
-            break
-        _deposit_id: uint256 = _max_id - i
-        if self.ignores[_deposit_id]:
-            continue
-        _deposit: Deposit = self.deposits[_deposit_id]
-        if _deposit.amount0 == 0:
-            continue
-        _response: Bytes[64] = raw_call(
-            _deposit.pool,
-            method_id("getReserves()"),
-            is_static_call=True,
-            max_outsize=64
-        )
-        reserve0: uint256 = convert(slice(_response, 0, 32), uint256)
-        reserve1: uint256 = convert(slice(_response, 32, 32), uint256)
-        token0: address = UniswapV2Pair(_deposit.pool).token0()
-        if _deposit.token0 == token0 or (token0 == WETH and _deposit.token0 == VETH):
-            if _deposit.amount0 * reserve1 * 99 > _deposit.amount1_max * reserve0 * 100:
-                ids.append(_deposit_id)
-        else:
-            if _deposit.amount0 * reserve0 * 99 > _deposit.amount1_max * reserve1 * 100:
-                ids.append(_deposit_id)
-        if len(ids) >= MAX_SIZE:
-            break
-    return ids
-
-@external
-def ignore_deposit(deposit_id: uint256):
-    assert msg.sender == self.admin
-    self.ignores[deposit_id] = True
-    log Ignored(deposit_id)
-
-@external
-def update_admin(new_admin: address):
-    assert msg.sender == self.admin
-    self.admin = new_admin
-
-@external
 def update_compass(new_compass: address):
-    assert msg.sender == self.admin
+    assert msg.sender == self.compass
     self.compass = new_compass
+    log UpdateCompass(msg.sender, new_compass)
 
 @external
 @payable
