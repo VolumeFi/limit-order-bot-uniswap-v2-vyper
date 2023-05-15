@@ -46,12 +46,6 @@ brownie run scripts/deploy_pancakeswap.py --network bsc-main
 | *arg0*     | uint256 | Deposit Id to get Deposit information |
 | **Return** | Deposit | Deposit information                   |
 
-### ignores
-
-| Key        | Type    | Description                                     |
-| ---------- | ------- | ----------------------------------------------- |
-| *arg0*     | uint256 | Deposit Id to check if it is in the ignore list |
-| **Return** | bool    | True if it is in the ignore list                |
 
 ## State-Changing functions
 
@@ -59,16 +53,17 @@ brownie run scripts/deploy_pancakeswap.py --network bsc-main
 
 Deposit a token with its amount with an expected token address and amount. This is run by users.
 
-| Key     | Type    | Description            |
-| ------- | ------- | ---------------------- |
-| token0  | address | Deposit token address  |
-| token1  | address | Expected token address |
-| amount0 | uint256 | Deposit token amount   |
-| amount1 | uint256 | Expected token amount  |
+| Key         | Type    | Description                             |
+| ----------- | ------- | --------------------------------------- |
+| token0      | address | Deposit token address                   |
+| token1      | address | Expected token address                  |
+| amount0     | uint256 | Deposit token amount                    |
+| amount1_min | uint256 | Expected token amount for stop loss     |
+| amount1_max | uint256 | Expected token amount for profit taking |
 
 ### cancel
 
-Cancel order.
+Cancel order. This is run by users.
 
 | Key        | Type    | Description          |
 | ---------- | ------- | -------------------- |
@@ -76,39 +71,25 @@ Cancel order.
 
 ### withdraw
 
-Swap and send the token to the depositor.
+Swap and send the token to the depositor. This is run by Compass-EVM only.
 
-| Key        | Type    | Description                                  |
-| ---------- | ------- | -------------------------------------------- |
-| deposit_id | uint256 | Deposit Id to swap and send to the depositor |
+| Key                        | Type    | Description                                    |
+| -------------------------- | ------- | ---------------------------------------------- |
+| deposit_id                 | uint256 | Deposit Id to swap and send to the depositor   |
+| profit_taking_or_stop_loss | bool    | True for profit taking and False for stop loss |
 
 ### multiple_withdraw
 
-Swap and send multiple tokens to the depositor.
+Swap and send multiple tokens to the depositor. This is run by Compass-EVM only.
 
-| Key         | Type      | Description                                      |
-| ----------- | --------- | ------------------------------------------------ |
-| deposit_ids | uint256[] | Deposit Ids array to swap and send to depositors |
-
-### ignore_deposit
-
-Ignore a deposit id from withdraw list in case the expected token is a fee charged token. It will revert withdraw transaction so it can be canceled only after ignored.
-
-| Key        | Type    | Description                             |
-| ---------- | ------- | --------------------------------------- |
-| deposit_id | uint256 | Deposit Id to ignore from withdraw list |
-
-### update_admin
-
-Update admin address.
-
-| Key       | Type    | Description       |
-| --------- | ------- | ----------------- |
-| new_admin | address | New admin address |
+| Key                        | Type      | Description                                             |
+| -------------------------- | --------- | ------------------------------------------------------- |
+| deposit_ids                | uint256[] | Deposit Ids array to swap and send to depositors        |
+| profit_taking_or_stop_loss | bool[]    | Array of True for profit taking and False for stop loss |
 
 ### update_compass
 
-Update Compass-EVM address.
+Update Compass-EVM address.  This is run by Compass-EVM only.
 
 | Key         | Type    | Description             |
 | ----------- | ------- | ----------------------- |
@@ -118,11 +99,12 @@ Update Compass-EVM address.
 
 ### Deposit
 
-| Key       | Type    | Description                      |
-| --------- | ------- | -------------------------------- |
-| token0    | address | Token address to trade           |
-| token1    | address | Token address to receive         |
-| amount0   | address | Token amount to trade            |
-| amount1   | address | Token amount to receive at least |
-| pool      | address | Dex(Uniswap V2) pool address     |
-| depositor | address | Depositor address                |
+| Key         | Type    | Description                                       |
+| ----------- | ------- | ------------------------------------------------- |
+| token0      | address | Token address to trade                            |
+| token1      | address | Token address to receive                          |
+| amount0     | uint256 | Token amount to trade                             |
+| amount1_min | uint256 | Token amount to receive at least on stop-loss     |
+| amount1_max | uint256 | Token amount to receive at least on profit taking |
+| pool        | address | Dex(Uniswap V2) pool address                      |
+| depositor   | address | Depositor address                                 |
