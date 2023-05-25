@@ -53,39 +53,42 @@ brownie run scripts/deploy_pancakeswap.py --network bsc-main
 
 Deposit a token with its amount with an expected token address and amount. This is run by users.
 
-| Key         | Type    | Description                             |
-| ----------- | ------- | --------------------------------------- |
-| token0      | address | Deposit token address                   |
-| token1      | address | Expected token address                  |
-| amount0     | uint256 | Deposit token amount                    |
-| amount1_min | uint256 | Expected token amount for stop loss     |
-| amount1_max | uint256 | Expected token amount for profit taking |
+| Key           | Type      | Description                                 |
+| ------------- | --------- | ------------------------------------------- |
+| path          | address[] | Initial token swap path via Uniswap V2      |
+| amount0       | uint256   | Deposit token amount                        |
+| min_amount1   | uint256   | Expected token amount from the initial swap |
+| profit_taking | uint256   | Permille of profit_taking                   |
+| stop_loss     | uint256   | Permille of stop_loss                       |
 
 ### cancel
 
 Cancel order. This is run by users.
 
-| Key        | Type    | Description          |
-| ---------- | ------- | -------------------- |
-| deposit_id | uint256 | Deposit Id to cancel |
+| Key         | Type    | Description                                           |
+| ----------- | ------- | ----------------------------------------------------- |
+| deposit_id  | uint256 | Deposit Id to cancel                                  |
+| min_amount0 | uint256 | Mininum amount of original token to receive on cancel |
 
 ### withdraw
 
 Swap and send the token to the depositor. This is run by Compass-EVM only.
 
-| Key                        | Type    | Description                                    |
-| -------------------------- | ------- | ---------------------------------------------- |
-| deposit_id                 | uint256 | Deposit Id to swap and send to the depositor   |
-| profit_taking_or_stop_loss | bool    | True for profit taking and False for stop loss |
+| Key           | Type         | Description                                             |
+| ------------- | ------------ | ------------------------------------------------------- |
+| deposit_id    | uint256      | Deposit Id to swap and send to the depositor            |
+| min_amount0   | uint256      | Mininum amount of original token to receive on withdraw |
+| withdraw_type | WithdrawType | Withdraw type enum value                                |
 
 ### multiple_withdraw
 
 Swap and send multiple tokens to the depositor. This is run by Compass-EVM only.
 
-| Key                        | Type      | Description                                             |
-| -------------------------- | --------- | ------------------------------------------------------- |
-| deposit_ids                | uint256[] | Deposit Ids array to swap and send to depositors        |
-| profit_taking_or_stop_loss | bool[]    | Array of True for profit taking and False for stop loss |
+| Key            | Type           | Description                                                   |
+| -------------- | -------------- | ------------------------------------------------------------- |
+| deposit_ids    | uint256[]      | Deposit Id array to swap and send to the depositor            |
+| min_amounts0   | uint256[]      | Mininum amount array of original token to receive on withdraw |
+| withdraw_types | WithdrawType[] | Withdraw type enum value array                                |
 
 ### update_compass
 
@@ -99,12 +102,18 @@ Update Compass-EVM address.  This is run by Compass-EVM only.
 
 ### Deposit
 
-| Key         | Type    | Description                                       |
-| ----------- | ------- | ------------------------------------------------- |
-| token0      | address | Token address to trade                            |
-| token1      | address | Token address to receive                          |
-| amount0     | uint256 | Token amount to trade                             |
-| amount1_min | uint256 | Token amount to receive at least on stop-loss     |
-| amount1_max | uint256 | Token amount to receive at least on profit taking |
-| pool        | address | Dex(Uniswap V2) pool address                      |
-| depositor   | address | Depositor address                                 |
+| Key       | Type      | Description                            |
+| --------- | --------- | -------------------------------------- |
+| path      | address[] | Initial token swap path via Uniswap V2 |
+| amount    | uint256   | Ordered token amount                   |
+| depositor | address   | Depositor address                      |
+
+## Enum
+
+### WithdrawType
+
+| Key           | Description   |
+| ------------- | ------------- |
+| CANCEL        | Cancel order  |
+| PROFIT_TAKING | Profit taking |
+| STOP_LOSS     | Stop loss     |
