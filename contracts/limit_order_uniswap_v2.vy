@@ -34,8 +34,8 @@ event Deposited:
 event Withdrawn:
     deposit_id: uint256
     withdrawer: address
-    profit_taking_or_stop_loss: WithdrawType
-    out_amount: uint256
+    withdraw_type: WithdrawType
+    withdraw_amount: uint256
 
 event UpdateCompass:
     old_compass: address
@@ -97,7 +97,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     if token1 == VETH:
         _path[last_index] = WETH
     amounts: DynArray[uint256, MAX_SIZE] = UniswapV2Router(ROUTER).swapExactTokensForTokens(amount0, min_amount1, _path, self, block.timestamp)
-
+    assert amounts[last_index] > 0
     deposit_id: uint256 = self.deposit_size
     self.deposits[deposit_id] = Deposit({
         path: path,
