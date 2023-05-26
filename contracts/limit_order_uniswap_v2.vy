@@ -20,6 +20,7 @@ interface UniswapV2Router:
     def WETH() -> address: pure
     def swapExactTokensForTokens(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256) -> DynArray[uint256, MAX_SIZE]: nonpayable
     def swapExactTokensForETH(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256) -> DynArray[uint256, MAX_SIZE]: nonpayable
+    def getAmountsOut(amountIn: uint256, path: DynArray[address, MAX_SIZE]) -> DynArray[uint256, MAX_SIZE]: view
 
 event Deposited:
     deposit_id: uint256
@@ -134,7 +135,7 @@ def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: Withdraw
         amounts = UniswapV2Router(ROUTER).swapExactTokensForETH(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
     else:
         amounts = UniswapV2Router(ROUTER).swapExactTokensForTokens(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
-    log Withdrawn(deposit_id, msg.sender, withdraw_type, amounts[unsafe_sub(len(amounts), 1)])
+    log Withdrawn(deposit_id, msg.sender, withdraw_type, amounts[last_index])
 
 @external
 def cancel(deposit_id: uint256, min_amount0: uint256):
@@ -144,6 +145,24 @@ def cancel(deposit_id: uint256, min_amount0: uint256):
 def withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: WithdrawType):
     assert msg.sender == self.compass
     self._withdraw(deposit_id, min_amount0, withdraw_type)
+
+@external
+@view
+def withdraw_amount(deposit_id: uint256) -> uint256:
+    deposit: Deposit = self.deposits[deposit_id]
+    path: DynArray[address, MAX_SIZE] = []
+    last_index: uint256 = unsafe_sub(len(deposit.path), 1)
+    for i in range(MAX_SIZE):
+        path.append(deposit.path[unsafe_sub(last_index, i)])
+        if i >= last_index:
+            break
+    if path[0] == VETH:
+        path[0] = WETH
+    if path[last_index] == VETH:
+        path[last_index] = WETH
+    amounts: DynArray[uint256, MAX_SIZE] = []
+    amounts = UniswapV2Router(ROUTER).getAmountsOut(deposit.amount1, path)
+    return amounts[last_index]
 
 @external
 def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
