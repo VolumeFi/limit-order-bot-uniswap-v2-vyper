@@ -80,7 +80,7 @@ def _safe_transfer_from(_token: address, _from: address, _to: address, _value: u
 @external
 @payable
 def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: uint256, profit_taking: uint256, stop_loss: uint256):
-    assert len(path) > 2, "Wrong path"
+    assert len(path) >= 2, "Wrong path"
     _path: DynArray[address, MAX_SIZE] = path
     token0: address = path[0]
     last_index: uint256 = unsafe_sub(len(path), 1)
@@ -97,6 +97,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
         assert ERC20(token0).balanceOf(self) == orig_balance + amount0
     if token1 == VETH:
         _path[last_index] = WETH
+    self._safe_approve(_path[0], ROUTER, amount0)
     amounts: DynArray[uint256, MAX_SIZE] = UniswapV2Router(ROUTER).swapExactTokensForTokens(amount0, min_amount1, _path, self, block.timestamp)
     assert amounts[last_index] > 0
     deposit_id: uint256 = self.deposit_size
