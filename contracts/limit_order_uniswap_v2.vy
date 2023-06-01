@@ -1,4 +1,4 @@
-# @version 0.3.7
+# @version 0.3.9
 
 struct Deposit:
     path: DynArray[address, MAX_SIZE]
@@ -18,8 +18,8 @@ interface WrappedEth:
 
 interface UniswapV2Router:
     def WETH() -> address: pure
-    def swapExactTokensForTokens(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256) -> DynArray[uint256, MAX_SIZE]: nonpayable
-    def swapExactTokensForETH(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256) -> DynArray[uint256, MAX_SIZE]: nonpayable
+    def swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256): nonpayable
+    def swapExactTokensForETHSupportingFeeOnTransferTokens(amountIn: uint256, amountOutMin: uint256, path: DynArray[address, MAX_SIZE], to: address, deadline: uint256): nonpayable
     def getAmountsOut(amountIn: uint256, path: DynArray[address, MAX_SIZE]) -> DynArray[uint256, MAX_SIZE]: view
 
 event Deposited:
@@ -85,6 +85,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     token0: address = path[0]
     last_index: uint256 = unsafe_sub(len(path), 1)
     token1: address = path[last_index]
+    _amount0: uint256 = amount0
     if token0 == VETH:
         assert msg.value == amount0
         if msg.value > amount0:
@@ -92,25 +93,27 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
         WrappedEth(WETH).deposit(value=amount0)
         _path[0] = WETH
     else:
-        orig_balance: uint256 = ERC20(token0).balanceOf(self)
+        _amount0 = ERC20(token0).balanceOf(self)
         self._safe_transfer_from(token0, msg.sender, self, amount0)
-        assert ERC20(token0).balanceOf(self) == orig_balance + amount0
+        _amount0 = ERC20(token0).balanceOf(self) - _amount0
     if token1 == VETH:
         _path[last_index] = WETH
-    self._safe_approve(_path[0], ROUTER, amount0)
-    amounts: DynArray[uint256, MAX_SIZE] = UniswapV2Router(ROUTER).swapExactTokensForTokens(amount0, min_amount1, _path, self, block.timestamp)
-    assert amounts[last_index] > 0
+    self._safe_approve(_path[0], ROUTER, _amount0)
+    _amount1: uint256 = ERC20(_path[last_index]).balanceOf(self)
+    UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount0, min_amount1, _path, self, block.timestamp)
+    _amount1 = ERC20(_path[last_index]).balanceOf(self) - _amount1
+    assert _amount1 > 0
     deposit_id: uint256 = self.deposit_size
     self.deposits[deposit_id] = Deposit({
         path: path,
-        amount1: amounts[last_index],
+        amount1: _amount1,
         depositor: msg.sender
     })
     self.deposit_size = deposit_id + 1
-    log Deposited(deposit_id, token0, token1, amount0, amounts[last_index], msg.sender, profit_taking, stop_loss)
+    log Deposited(deposit_id, token0, token1, amount0, _amount1, msg.sender, profit_taking, stop_loss)
 
 @internal
-def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: WithdrawType):
+def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: WithdrawType) -> uint256:
     deposit: Deposit = self.deposits[deposit_id]
     if withdraw_type == WithdrawType.CANCEL:
         assert msg.sender == deposit.depositor
@@ -130,40 +133,23 @@ def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: Withdraw
         path[0] = WETH
     if path[last_index] == VETH:
         path[last_index] = WETH
-    self._safe_approve(path[0], ROUTER, deposit.amount1)
-    amounts: DynArray[uint256, MAX_SIZE] = []
+    _amount1: uint256 = ERC20(path[0]).balanceOf(self)
+    self._safe_approve(path[0], ROUTER, _amount1)
+    _amount0: uint256 = 0
     if deposit.path[0] == VETH:
-        amounts = UniswapV2Router(ROUTER).swapExactTokensForETH(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
+        _amount0 = deposit.depositor.balance
+        UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount1, min_amount0, path, deposit.depositor, block.timestamp)
+        _amount0 = deposit.depositor.balance - _amount0
     else:
-        amounts = UniswapV2Router(ROUTER).swapExactTokensForTokens(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
-    log Withdrawn(deposit_id, msg.sender, withdraw_type, amounts[last_index])
+        _amount0 = ERC20(path[last_index]).balanceOf(self)
+        UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount1, min_amount0, path, deposit.depositor, block.timestamp)
+        _amount0 = ERC20(path[last_index]).balanceOf(self) - _amount0
+    log Withdrawn(deposit_id, msg.sender, withdraw_type, _amount0)
+    return _amount0
 
 @external
-def cancel(deposit_id: uint256, min_amount0: uint256):
-    self._withdraw(deposit_id, min_amount0, WithdrawType.CANCEL)
-
-@external
-def withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: WithdrawType):
-    assert msg.sender == self.compass
-    self._withdraw(deposit_id, min_amount0, withdraw_type)
-
-@external
-@view
-def withdraw_amount(deposit_id: uint256) -> uint256:
-    deposit: Deposit = self.deposits[deposit_id]
-    path: DynArray[address, MAX_SIZE] = []
-    last_index: uint256 = unsafe_sub(len(deposit.path), 1)
-    for i in range(MAX_SIZE):
-        path.append(deposit.path[unsafe_sub(last_index, i)])
-        if i >= last_index:
-            break
-    if path[0] == VETH:
-        path[0] = WETH
-    if path[last_index] == VETH:
-        path[last_index] = WETH
-    amounts: DynArray[uint256, MAX_SIZE] = []
-    amounts = UniswapV2Router(ROUTER).getAmountsOut(deposit.amount1, path)
-    return amounts[last_index]
+def cancel(deposit_id: uint256, min_amount0: uint256) -> uint256:
+    return self._withdraw(deposit_id, min_amount0, WithdrawType.CANCEL)
 
 @external
 def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
