@@ -79,6 +79,7 @@ def _safe_transfer_from(_token: address, _from: address, _to: address, _value: u
 
 @external
 @payable
+@nonreentrant("lock")
 def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: uint256, profit_taking: uint256, stop_loss: uint256):
     assert len(path) >= 2, "Wrong path"
     _path: DynArray[address, MAX_SIZE] = path
@@ -87,7 +88,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     token1: address = path[last_index]
     _amount0: uint256 = amount0
     if token0 == VETH:
-        assert msg.value == amount0
+        assert msg.value >= amount0
         if msg.value > amount0:
             send(msg.sender, msg.value - amount0)
         WrappedEth(WETH).deposit(value=amount0)
@@ -133,16 +134,15 @@ def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: Withdraw
         path[0] = WETH
     if path[last_index] == VETH:
         path[last_index] = WETH
-    _amount1: uint256 = ERC20(path[0]).balanceOf(self)
-    self._safe_approve(path[0], ROUTER, _amount1)
+    self._safe_approve(path[0], ROUTER, deposit.amount1)
     _amount0: uint256 = 0
     if deposit.path[0] == VETH:
         _amount0 = deposit.depositor.balance
-        UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(_amount1, min_amount0, path, deposit.depositor, block.timestamp)
+        UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
         _amount0 = deposit.depositor.balance - _amount0
     else:
         _amount0 = ERC20(path[last_index]).balanceOf(self)
-        UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount1, min_amount0, path, deposit.depositor, block.timestamp)
+        UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(deposit.amount1, min_amount0, path, deposit.depositor, block.timestamp)
         _amount0 = ERC20(path[last_index]).balanceOf(self) - _amount0
     log Withdrawn(deposit_id, msg.sender, withdraw_type, _amount0)
     return _amount0
