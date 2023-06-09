@@ -1,4 +1,4 @@
-# @version 0.3.9
+# @version 0.3.7
 
 struct Deposit:
     path: DynArray[address, MAX_SIZE]
@@ -42,6 +42,14 @@ event UpdateCompass:
     old_compass: address
     new_compass: address
 
+event UpdateRefundWallet:
+    old_refund_wallet: address
+    new_refund_wallet: address
+
+event UpdateFee:
+    old_fee: uint256
+    new_fee: uint256
+
 WETH: immutable(address)
 VETH: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE # Virtual ETH
 MAX_SIZE: constant(uint256) = 8
@@ -49,13 +57,19 @@ ROUTER: immutable(address)
 compass: public(address)
 deposit_size: public(uint256)
 deposits: public(HashMap[uint256, Deposit])
+refund_wallet: public(address)
+fee: public(uint256)
 
 @external
-def __init__(_compass: address, router: address):
+def __init__(_compass: address, router: address, _refund_wallet: address, _fee: uint256):
     self.compass = _compass
     ROUTER = router
     WETH = UniswapV2Router(ROUTER).WETH()
+    self.refund_wallet = _refund_wallet
+    self.fee = _fee
     log UpdateCompass(empty(address), _compass)
+    log UpdateRefundWallet(empty(address), _refund_wallet)
+    log UpdateFee(0, _fee)
 
 @internal
 def _safe_approve(_token: address, _to: address, _value: uint256):
@@ -81,6 +95,11 @@ def _safe_transfer_from(_token: address, _from: address, _to: address, _value: u
 @payable
 @nonreentrant("lock")
 def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: uint256, profit_taking: uint256, stop_loss: uint256):
+    _value: uint256 = msg.value
+    _fee: uint256 = self.fee
+    assert _value >= _fee, "Insufficient fee"
+    send(self.refund_wallet, _fee)
+    _value = unsafe_sub(_value, _fee)
     assert len(path) >= 2, "Wrong path"
     _path: DynArray[address, MAX_SIZE] = path
     token0: address = path[0]
@@ -88,12 +107,13 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     token1: address = path[last_index]
     _amount0: uint256 = amount0
     if token0 == VETH:
-        assert msg.value >= amount0
-        if msg.value > amount0:
-            send(msg.sender, msg.value - amount0)
+        assert _value >= amount0, "Insufficient deposit"
+        if _value > amount0:
+            send(msg.sender, unsafe_sub(_value, amount0))
         WrappedEth(WETH).deposit(value=amount0)
         _path[0] = WETH
     else:
+        send(msg.sender, _value)
         _amount0 = ERC20(token0).balanceOf(self)
         self._safe_transfer_from(token0, msg.sender, self, amount0)
         _amount0 = ERC20(token0).balanceOf(self) - _amount0
@@ -103,27 +123,27 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     _amount1: uint256 = ERC20(_path[last_index]).balanceOf(self)
     UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(_amount0, min_amount1, _path, self, block.timestamp)
     _amount1 = ERC20(_path[last_index]).balanceOf(self) - _amount1
-    assert _amount1 > 0
+    assert _amount1 > 0, "Insufficient deposit"
     deposit_id: uint256 = self.deposit_size
     self.deposits[deposit_id] = Deposit({
         path: path,
         amount1: _amount1,
         depositor: msg.sender
     })
-    self.deposit_size = deposit_id + 1
+    self.deposit_size = unsafe_add(deposit_id, 1)
     log Deposited(deposit_id, token0, token1, amount0, _amount1, msg.sender, profit_taking, stop_loss)
 
 @internal
 def _withdraw(deposit_id: uint256, min_amount0: uint256, withdraw_type: WithdrawType) -> uint256:
     deposit: Deposit = self.deposits[deposit_id]
     if withdraw_type == WithdrawType.CANCEL:
-        assert msg.sender == deposit.depositor
+        assert msg.sender == deposit.depositor, "Unauthorized"
     self.deposits[deposit_id] = Deposit({
         path: empty(DynArray[address, MAX_SIZE]),
         amount1: empty(uint256),
         depositor: empty(address)
     })
-    assert deposit.amount1 > 0
+    assert deposit.amount1 > 0, "Empty deposit"
     last_index: uint256 = unsafe_sub(len(deposit.path), 1)
     path: DynArray[address, MAX_SIZE] = []
     for i in range(MAX_SIZE):
@@ -153,8 +173,8 @@ def cancel(deposit_id: uint256, min_amount0: uint256) -> uint256:
 
 @external
 def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
-    assert msg.sender == self.compass
-    assert len(deposit_ids) == len(min_amounts0) and len(deposit_ids) == len(withdraw_types)
+    assert msg.sender == self.compass, "Unauthorized"
+    assert len(deposit_ids) == len(min_amounts0) and len(deposit_ids) == len(withdraw_types), "Validation error"
     for i in range(MAX_SIZE):
         if i >= len(deposit_ids):
             break
@@ -162,6 +182,20 @@ def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: Dy
 
 @external
 def update_compass(new_compass: address):
-    assert msg.sender == self.compass
+    assert msg.sender == self.compass, "Unauthorized"
     self.compass = new_compass
     log UpdateCompass(msg.sender, new_compass)
+
+@external
+def update_refund_wallet(new_refund_wallet: address):
+    assert msg.sender == self.compass, "Unauthorized"
+    old_refund_wallet: address = self.refund_wallet
+    self.refund_wallet = new_refund_wallet
+    log UpdateRefundWallet(old_refund_wallet, new_refund_wallet)
+
+@external
+def update_fee(new_fee: uint256):
+    assert msg.sender == self.compass, "Unauthorized"
+    old_fee: uint256 = self.fee
+    self.fee = new_fee
+    log UpdateFee(old_fee, new_fee)
