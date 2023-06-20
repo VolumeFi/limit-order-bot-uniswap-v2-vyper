@@ -50,6 +50,9 @@ event UpdateFee:
     old_fee: uint256
     new_fee: uint256
 
+event SetPaloma:
+    paloma: bytes32
+
 WETH: immutable(address)
 VETH: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE # Virtual ETH
 MAX_SIZE: constant(uint256) = 8
@@ -59,6 +62,7 @@ deposit_size: public(uint256)
 deposits: public(HashMap[uint256, Deposit])
 refund_wallet: public(address)
 fee: public(uint256)
+paloma: public(bytes32)
 
 @external
 def __init__(_compass: address, router: address, _refund_wallet: address, _fee: uint256):
@@ -98,6 +102,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, min_amount1: ui
     _value: uint256 = msg.value
     _fee: uint256 = self.fee
     assert _value >= _fee, "Insufficient fee"
+    assert self.paloma != empty(bytes32), "Paloma not set"
     send(self.refund_wallet, _fee)
     _value = unsafe_sub(_value, _fee)
     assert len(path) >= 2, "Wrong path"
@@ -174,7 +179,11 @@ def cancel(deposit_id: uint256, min_amount0: uint256) -> uint256:
 @external
 def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
     assert msg.sender == self.compass, "Unauthorized"
-    assert len(deposit_ids) == len(min_amounts0) and len(deposit_ids) == len(withdraw_types), "Validation error"
+    _len: uint256 = len(deposit_ids)
+    assert _len == len(min_amounts0) and _len == len(withdraw_types), "Validation error"
+    _len = unsafe_add(unsafe_mul(unsafe_add(_len, 2), 96), 4)
+    assert len(msg.data) == _len, "invalid payload"
+    assert self.paloma == convert(slice(msg.data, unsafe_sub(_len, 32), 32), bytes32), "invalid paloma"
     for i in range(MAX_SIZE):
         if i >= len(deposit_ids):
             break
@@ -182,20 +191,27 @@ def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: Dy
 
 @external
 def update_compass(new_compass: address):
-    assert msg.sender == self.compass, "Unauthorized"
+    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
     self.compass = new_compass
     log UpdateCompass(msg.sender, new_compass)
 
 @external
 def update_refund_wallet(new_refund_wallet: address):
-    assert msg.sender == self.compass, "Unauthorized"
+    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
     old_refund_wallet: address = self.refund_wallet
     self.refund_wallet = new_refund_wallet
     log UpdateRefundWallet(old_refund_wallet, new_refund_wallet)
 
 @external
 def update_fee(new_fee: uint256):
-    assert msg.sender == self.compass, "Unauthorized"
+    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
     old_fee: uint256 = self.fee
     self.fee = new_fee
     log UpdateFee(old_fee, new_fee)
+
+@external
+def set_paloma():
+    assert msg.sender == self.compass and self.paloma == empty(bytes32) and len(msg.data) == 36, "Invalid"
+    _paloma: bytes32 = convert(slice(msg.data, 4, 32), bytes32)
+    self.paloma = _paloma
+    log SetPaloma(_paloma)
