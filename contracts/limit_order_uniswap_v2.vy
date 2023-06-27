@@ -181,7 +181,7 @@ def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: Dy
     assert msg.sender == self.compass, "Unauthorized"
     _len: uint256 = len(deposit_ids)
     assert _len == len(min_amounts0) and _len == len(withdraw_types), "Validation error"
-    _len = unsafe_add(unsafe_mul(unsafe_add(_len, 2), 96), 4)
+    _len = unsafe_add(unsafe_mul(unsafe_add(_len, 2), 96), 36)
     assert len(msg.data) == _len, "invalid payload"
     assert self.paloma == convert(slice(msg.data, unsafe_sub(_len, 32), 32), bytes32), "invalid paloma"
     for i in range(MAX_SIZE):
