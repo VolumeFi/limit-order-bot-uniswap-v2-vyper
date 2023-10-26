@@ -192,7 +192,7 @@ def _withdraw(deposit_id: uint256, expected: uint256, withdraw_type: WithdrawTyp
         path[last_index] = WETH
     self._safe_approve(path[0], ROUTER, deposit.amount)
     _amount0: uint256 = 0
-    if deposit.path[0] == VETH:
+    if deposit.path[last_index] == VETH:
         _amount0 = deposit.depositor.balance
         UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(deposit.amount, expected, path, deposit.depositor, block.timestamp)
         _amount0 = deposit.depositor.balance - _amount0
