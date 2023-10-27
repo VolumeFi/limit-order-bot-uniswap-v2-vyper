@@ -23,6 +23,7 @@ interface ERC20:
 
 interface WrappedEth:
     def deposit(): payable
+    def withdraw(amount: uint256): nonpayable
 
 interface UniswapV2Router:
     def WETH() -> address: pure
@@ -177,48 +178,62 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, profit_taking: 
 def _withdraw(deposit_id: uint256, expected: uint256, withdraw_type: WithdrawType) -> uint256:
     deposit: Deposit = self.deposits[deposit_id]
     if withdraw_type == WithdrawType.CANCEL:
-        assert msg.sender == deposit.depositor or msg.sender == empty(address), "Unauthorized"
+        assert msg.sender == deposit.depositor, "Unauthorized"
     self.deposits[deposit_id] = Deposit({
         path: empty(DynArray[address, MAX_SIZE]),
         amount: empty(uint256),
         depositor: empty(address)
     })
     assert deposit.amount > 0, "Empty deposit"
-    last_index: uint256 = unsafe_sub(len(deposit.path), 1)
-    path: DynArray[address, MAX_SIZE] = deposit.path
-    if path[0] == VETH:
-        path[0] = WETH
-    if path[last_index] == VETH:
-        path[last_index] = WETH
-    self._safe_approve(path[0], ROUTER, deposit.amount)
-    _amount0: uint256 = 0
-    if deposit.path[last_index] == VETH:
-        _amount0 = deposit.depositor.balance
-        UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(deposit.amount, expected, path, deposit.depositor, block.timestamp)
-        _amount0 = deposit.depositor.balance - _amount0
+    if withdraw_type == WithdrawType.CANCEL or withdraw_type == WithdrawType.EXPIRE:
+        if deposit.path[0] == VETH:
+            WrappedEth(WETH).withdraw(deposit.amount)
+            send(deposit.depositor, deposit.amount)
+        else:
+            self._safe_transfer(deposit.path[0], deposit.depositor, deposit.amount)
+        log Withdrawn(deposit_id, msg.sender, withdraw_type, deposit.amount)
+        return deposit.amount
     else:
-        _amount0 = ERC20(path[last_index]).balanceOf(self)
-        UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(deposit.amount, expected, path, deposit.depositor, block.timestamp)
-        _amount0 = ERC20(path[last_index]).balanceOf(self) - _amount0
-    log Withdrawn(deposit_id, msg.sender, withdraw_type, _amount0)
-    return _amount0
+        last_index: uint256 = unsafe_sub(len(deposit.path), 1)
+        path: DynArray[address, MAX_SIZE] = deposit.path
+        if path[0] == VETH:
+            path[0] = WETH
+        if path[last_index] == VETH:
+            path[last_index] = WETH
+        self._safe_approve(path[0], ROUTER, deposit.amount)
+        _amount0: uint256 = 0
+        if deposit.path[last_index] == VETH:
+            _amount0 = deposit.depositor.balance
+            UniswapV2Router(ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(deposit.amount, expected, path, deposit.depositor, block.timestamp)
+            _amount0 = deposit.depositor.balance - _amount0
+        else:
+            _amount0 = ERC20(path[last_index]).balanceOf(self)
+            UniswapV2Router(ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(deposit.amount, expected, path, deposit.depositor, block.timestamp)
+            _amount0 = ERC20(path[last_index]).balanceOf(self) - _amount0
+        log Withdrawn(deposit_id, msg.sender, withdraw_type, _amount0)
+        return _amount0
 
 @external
-def cancel(deposit_id: uint256, expected: uint256) -> uint256:
-    return self._withdraw(deposit_id, expected, WithdrawType.CANCEL)
+def cancel(deposit_id: uint256) -> uint256:
+    return self._withdraw(deposit_id, 0, WithdrawType.CANCEL)
 
 @external
-def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], min_amounts0: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
+def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], expected: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
     assert msg.sender == self.compass, "Unauthorized"
     _len: uint256 = len(deposit_ids)
-    assert _len == len(min_amounts0) and _len == len(withdraw_types), "Validation error"
+    assert _len == len(expected) and _len == len(withdraw_types), "Validation error"
     _len = unsafe_add(unsafe_mul(unsafe_add(_len, 2), 96), 36)
     assert len(msg.data) == _len, "invalid payload"
     assert self.paloma == convert(slice(msg.data, unsafe_sub(_len, 32), 32), bytes32), "invalid paloma"
     for i in range(MAX_SIZE):
         if i >= len(deposit_ids):
             break
-        self._withdraw(deposit_ids[i], min_amounts0[i], withdraw_types[i])
+        self._withdraw(deposit_ids[i], expected[i], withdraw_types[i])
+
+@external
+def withdraw(deposit_id: uint256, withdraw_type: WithdrawType) -> uint256:
+    assert msg.sender == empty(address) # this will work as a view function only
+    return self._withdraw(deposit_id, 1, withdraw_type)
 
 @external
 def update_compass(new_compass: address):
@@ -246,3 +261,8 @@ def set_paloma():
     _paloma: bytes32 = convert(slice(msg.data, 4, 32), bytes32)
     self.paloma = _paloma
     log SetPaloma(_paloma)
+
+@external
+@payable
+def __default__():
+    pass
