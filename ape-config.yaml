@@ -1,0 +1,31 @@
+name: Limit Order Bot Uniswap v2 bot
+foundry:
+  fork:
+    ethereum:
+      mainnet:
+        upstream_provider: infura
+hardhat:
+  fork:
+    ethereum:
+      mainnet:
+        upstream_provider: infura
+ethereum:
+  default_network: mainnet-fork
+  mainnet_fork:
+    default_provider: foundry
+geth:
+  bsc:
+    mainnet:
+      uri: https://bsc-dataseed1.binance.org/
+  gnosis:
+    mainnet:
+      uri: https://rpc.gnosischain.com/
+  arbitrum:
+    mainnet:
+      uri: https://arb1.arbitrum.io/rpc/
+  base:
+    mainnet:
+      uri: https://mainnet.base.org/
+  optimism:
+    mainnet:
+      uri: https://mainnet.optimism.io/

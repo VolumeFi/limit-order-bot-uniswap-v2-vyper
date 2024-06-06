@@ -20,6 +20,9 @@ enum WithdrawType:
 
 interface ERC20:
     def balanceOf(_owner: address) -> uint256: view
+    def approve(_spender: address, _value: uint256) -> bool: nonpayable
+    def transfer(_to: address, _value: uint256) -> bool: nonpayable
+    def transferFrom(_from: address, _to: address, _value: uint256) -> bool: nonpayable
 
 interface WrappedEth:
     def deposit(): payable
@@ -73,7 +76,7 @@ event UpdateServiceFee:
 WETH: immutable(address)
 VETH: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE # Virtual ETH
 MAX_SIZE: constant(uint256) = 8
-DENOMINATOR: constant(uint256) = 10000
+DENOMINATOR: constant(uint256) = 10 ** 18
 ROUTER: immutable(address)
 compass: public(address)
 deposit_size: public(uint256)
@@ -100,34 +103,8 @@ def __init__(_compass: address, router: address, _refund_wallet: address, _fee: 
     log UpdateServiceFee(0, _service_fee)
 
 @internal
-def _safe_approve(_token: address, _to: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        _abi_encode(_to, _value, method_id=method_id("approve(address,uint256)")),
-        max_outsize=32
-    )  # dev: failed approve
-    if len(_response) > 0:
-        assert convert(_response, bool) # dev: failed approve
-
-@internal
 def _safe_transfer(_token: address, _to: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        _abi_encode(_to, _value, method_id=method_id("transfer(address,uint256)")),
-        max_outsize=32
-    )  # dev: failed transfer
-    if len(_response) > 0:
-        assert convert(_response, bool) # dev: failed transfer
-
-@internal
-def _safe_transfer_from(_token: address, _from: address, _to: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        _abi_encode(_from, _to, _value, method_id=method_id("transferFrom(address,address,uint256)")),
-        max_outsize=32
-    )  # dev: failed transferFrom
-    if len(_response) > 0:
-        assert convert(_response, bool) # dev: failed transferFrom
+    assert ERC20(_token).transfer(_to, _value, default_return_value=True), "Failed transfer"
 
 @external
 @payable
@@ -157,7 +134,7 @@ def deposit(path: DynArray[address, MAX_SIZE], amount0: uint256, profit_taking: 
     else:
         send(msg.sender, _value)
         _amount0 = ERC20(token0).balanceOf(self)
-        self._safe_transfer_from(token0, msg.sender, self, amount0)
+        assert ERC20(token0).transferFrom(msg.sender, self, amount0, default_return_value=True), "Failed transferFrom"
         _amount0 = ERC20(token0).balanceOf(self) - _amount0
         if _service_fee > 0:
             _service_fee_amount: uint256 = unsafe_div(_amount0 * _service_fee, DENOMINATOR)
@@ -200,7 +177,7 @@ def _withdraw(deposit_id: uint256, expected: uint256, withdraw_type: WithdrawTyp
             path[0] = WETH
         if path[last_index] == VETH:
             path[last_index] = WETH
-        self._safe_approve(path[0], ROUTER, deposit.amount)
+        assert ERC20(path[0]).approve(ROUTER, deposit.amount, default_return_value=True), "Failed approve"
         _amount0: uint256 = 0
         if deposit.path[last_index] == VETH:
             _amount0 = deposit.depositor.balance
@@ -217,14 +194,16 @@ def _withdraw(deposit_id: uint256, expected: uint256, withdraw_type: WithdrawTyp
 def cancel(deposit_id: uint256) -> uint256:
     return self._withdraw(deposit_id, 0, WithdrawType.CANCEL)
 
+@internal
+def _paloma_check():
+    assert msg.sender == self.compass, "Not compass"
+    assert self.paloma == convert(slice(msg.data, unsafe_sub(len(msg.data), 32), 32), bytes32), "Invalid paloma"
+
 @external
 def multiple_withdraw(deposit_ids: DynArray[uint256, MAX_SIZE], expected: DynArray[uint256, MAX_SIZE], withdraw_types: DynArray[WithdrawType, MAX_SIZE]):
-    assert msg.sender == self.compass, "Unauthorized"
+    self._paloma_check()
     _len: uint256 = len(deposit_ids)
     assert _len == len(expected) and _len == len(withdraw_types), "Validation error"
-    _len = unsafe_add(unsafe_mul(unsafe_add(_len, 2), 96), 36)
-    assert len(msg.data) == _len, "invalid payload"
-    assert self.paloma == convert(slice(msg.data, unsafe_sub(_len, 32), 32), bytes32), "invalid paloma"
     for i in range(MAX_SIZE):
         if i >= len(deposit_ids):
             break
@@ -237,20 +216,20 @@ def withdraw(deposit_id: uint256, withdraw_type: WithdrawType) -> uint256:
 
 @external
 def update_compass(new_compass: address):
-    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
+    self._paloma_check()
     self.compass = new_compass
     log UpdateCompass(msg.sender, new_compass)
 
 @external
 def update_refund_wallet(new_refund_wallet: address):
-    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
+    self._paloma_check()
     old_refund_wallet: address = self.refund_wallet
     self.refund_wallet = new_refund_wallet
     log UpdateRefundWallet(old_refund_wallet, new_refund_wallet)
 
 @external
 def update_fee(new_fee: uint256):
-    assert msg.sender == self.compass and len(msg.data) == 68 and convert(slice(msg.data, 36, 32), bytes32) == self.paloma, "Unauthorized"
+    self._paloma_check()
     old_fee: uint256 = self.fee
     self.fee = new_fee
     log UpdateFee(old_fee, new_fee)
@@ -261,6 +240,20 @@ def set_paloma():
     _paloma: bytes32 = convert(slice(msg.data, 4, 32), bytes32)
     self.paloma = _paloma
     log SetPaloma(_paloma)
+
+@external
+def update_service_fee_collector(new_service_fee_collector: address):
+    self._paloma_check()
+    self.service_fee_collector = new_service_fee_collector
+    log UpdateServiceFeeCollector(msg.sender, new_service_fee_collector)
+
+@external
+def update_service_fee(new_service_fee: uint256):
+    self._paloma_check()
+    assert new_service_fee < DENOMINATOR, "Wrong service fee"
+    old_service_fee: uint256 = self.service_fee
+    self.service_fee = new_service_fee
+    log UpdateServiceFee(old_service_fee, new_service_fee)
 
 @external
 @payable
